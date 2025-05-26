@@ -1,1 +1,1 @@
-web: gunicorn zav_streamer:app
+web: gunicorn ai_streamer:app
