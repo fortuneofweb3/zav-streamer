@@ -1,4 +1,4 @@
 flask==2.3.2
-transformers==4.46.0
-torch==2.6.0
+transformers==4.46.1
+torch==2.7.1+cpu
 gunicorn==23.0.0
