@@ -1,17 +1,21 @@
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 from flask import Flask, jsonify, request
 import random
 import re
-import threading
-import time
-import torch
 import logging
+import torch
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-# Initialize the text generation pipeline with a smaller model
-generator = pipeline('text-generation', model='EleutherAI/gpt-neo-125M', device=-1)
+# Initialize the text generation pipeline with quantized model
+try:
+    model = AutoModelForCausalLM.from_pretrained('EleutherAI/gpt-neo-125M', load_in_8bit=True)
+    tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neo-125M')
+    generator = pipeline('text-generation', model=model, tokenizer=tokenizer, device=-1)
+except Exception as e:
+    logging.error(f"Model loading failed: {str(e)}")
+    raise
 
 # Define Zav's personality prompt
 personality_prompt = (
@@ -51,18 +55,22 @@ def generate_text(is_reply=False, reply_text=None):
         prompt = f"{transition}{personality_prompt.format(topic=current_topic)}"
 
     # Generate text with memory optimization
-    with torch.no_grad():
-        output = generator(
-            prompt,
-            max_new_tokens=50,  # Reduced for memory
-            num_return_sequences=1,
-            truncation=True,
-            temperature=0.85,
-            top_k=40,
-            no_repeat_ngram_size=5,
-            pad_token_id=50256
-        )
-    generated = output[0]['generated_text']
+    try:
+        with torch.no_grad():
+            output = generator(
+                prompt,
+                max_new_tokens=20,  # Minimal for memory
+                num_return_sequences=1,
+                truncation=True,
+                temperature=0.85,
+                top_k=40,
+                no_repeat_ngram_size=5,
+                pad_token_id=50256
+            )
+        generated = output[0]['generated_text']
+    except Exception as e:
+        logging.error(f"Text generation failed: {str(e)}")
+        return "Yo, chat, something broke! Carl’s naggin’ crashed my vibe, no cap."
 
     # Clean text
     clean_text = re.sub(
@@ -111,16 +119,6 @@ def generate_text(is_reply=False, reply_text=None):
 
     logging.info(f"Generated text: {clean_text}")
     return clean_text
-
-# Automatic streaming
-def stream_continuously():
-    while True:
-        text = generate_text()
-        logging.info(f"Zav says: {text}")
-        time.sleep(60)
-
-# Start streaming in background
-threading.Thread(target=stream_continuously, daemon=True).start()
 
 # Flask API
 app = Flask(__name__)
