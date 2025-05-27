@@ -1,4 +1,4 @@
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from flask import Flask, jsonify, request
 import random
 import re
@@ -8,9 +8,16 @@ import torch
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
+# Initialize quantization config
+quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
 # Initialize the text generation pipeline with quantized model
 try:
-    model = AutoModelForCausalLM.from_pretrained('EleutherAI/gpt-neo-125M', load_in_8bit=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        'EleutherAI/gpt-neo-125M',
+        quantization_config=quantization_config,
+        device_map="auto"
+    )
     tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neo-125M')
     generator = pipeline('text-generation', model=model, tokenizer=tokenizer, device=-1)
 except Exception as e:
@@ -20,14 +27,12 @@ except Exception as e:
 # Define Zav's personality prompt
 personality_prompt = (
     "Zav is a 27-year-old crypto trader and zombie scare actor with high-energy Twitch vibes. "
-    "Rants start directly with a spontaneous story about {topic}, using phrases like 'I dove headfirst!' or 'This is wild!'"
+    "Rants start directly with a spontaneous story about {topic}."
 )
 
 # State variables
 current_topic = ""
 latest_text = ""
-instruction = ""
-previous_texts = []  # Track prior rants
 used_sentences = set()  # Track unique sentences
 
 # Predefined topics
@@ -37,29 +42,17 @@ topics = [
 ]
 
 # Generate text
-def generate_text(is_reply=False, reply_text=None):
-    global current_topic, latest_text, instruction, previous_texts, used_sentences
-    context_ref = previous_texts[-1].split()[-4:-1] if previous_texts else ["chat"]
-    context_word = " ".join(context_ref) if context_ref else "chat"
-
-    if is_reply and reply_text:
-        prompt = (
-            f"Zav, a crypto trader and zombie scare actor, streams with high-energy vibes. "
-            f"Chat says: '{reply_text}' "
-            f"He responds with a story about {current_topic}, jumping right in with phrases like 'I dove headfirst!' or 'This is wild!'"
-        )
-    else:
-        if random.random() < 0.3 or not previous_texts:
-            current_topic = random.choice([t for t in topics if t != current_topic])
-        transition = f"Speakin’ of {context_word}, "
-        prompt = f"{transition}{personality_prompt.format(topic=current_topic)}"
+def generate_text():
+    global current_topic, latest_text, used_sentences
+    current_topic = random.choice([t for t in topics if t != current_topic])
+    prompt = personality_prompt.format(topic=current_topic)
 
     # Generate text with memory optimization
     try:
         with torch.no_grad():
             output = generator(
                 prompt,
-                max_new_tokens=20,  # Minimal for memory
+                max_new_tokens=10,  # Minimal
                 num_return_sequences=1,
                 truncation=True,
                 temperature=0.85,
@@ -70,7 +63,7 @@ def generate_text(is_reply=False, reply_text=None):
         generated = output[0]['generated_text']
     except Exception as e:
         logging.error(f"Text generation failed: {str(e)}")
-        return "Yo, chat, something broke! Carl’s naggin’ crashed my vibe, no cap."
+        return "Yo, chat, something broke! Carl’s naggin’ crashed my vibe."
 
     # Clean text
     clean_text = re.sub(
@@ -110,15 +103,12 @@ def generate_text(is_reply=False, reply_text=None):
     if len(used_sentences) > 1000:
         used_sentences.clear()
 
-    if not is_reply:
-        latest_text = clean_text
-        previous_texts.append(clean_text)
-        if len(previous_texts) > 1:
-            previous_texts.pop(0)
-        instruction = ""
-
+    latest_text = clean_text
     logging.info(f"Generated text: {clean_text}")
     return clean_text
+
+# Initialize first rant
+generate_text()
 
 # Flask API
 app = Flask(__name__)
@@ -126,23 +116,6 @@ app = Flask(__name__)
 @app.route('/stream', methods=['GET'])
 def get_stream():
     return jsonify({'text': latest_text})
-
-@app.route('/instruct', methods=['POST'])
-def set_instruction():
-    global instruction
-    data = request.json
-    if 'instruction' in data:
-        instruction = data['instruction']
-        return jsonify({'status': 'Instruction received', 'instruction': instruction})
-    return jsonify({'error': 'No instruction provided'}), 400
-
-@app.route('/reply', methods=['POST'])
-def handle_reply():
-    data = request.json
-    if 'reply' in data:
-        response = generate_text(is_reply=True, reply_text=data['reply'])
-        return jsonify({'response': response})
-    return jsonify({'error': 'No reply provided'}), 400
 
 @app.route('/healthz', methods=['GET'])
 def health_check():
