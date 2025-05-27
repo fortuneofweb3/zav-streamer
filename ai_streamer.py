@@ -14,11 +14,11 @@ quantization_config = BitsAndBytesConfig(load_in_8bit=True)
 # Initialize the text generation pipeline with quantized model
 try:
     model = AutoModelForCausalLM.from_pretrained(
-        'EleutherAI/gpt-neo-125M',
+        'distilgpt2',  # Switched to smaller model
         quantization_config=quantization_config,
         device_map="auto"
     )
-    tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neo-125M')
+    tokenizer = AutoTokenizer.from_pretrained('distilgpt2')
     generator = pipeline('text-generation', model=model, tokenizer=tokenizer, device=-1)
 except Exception as e:
     logging.error(f"Model loading failed: {str(e)}")
