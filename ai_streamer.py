@@ -5,112 +5,124 @@ import re
 import threading
 import time
 import torch
+import logging
 
-generator = pipeline('text-generation', model='distilgpt2', device=-1)  # CPU
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
-def generate_text(topic, is_reply=False):
-    with torch.no_grad():  # Disable gradient computation
-        output = generator(...)
-    # Rest of your function
+# Initialize the text generation pipeline with a smaller model
+generator = pipeline('text-generation', model='EleutherAI/gpt-neo-125M', device=-1)
 
-# Initialize the text generation pipeline with DistilGPT-2
-generator = pipeline('text-generation', model='distilgpt2', device=-1)
-
-# Define Zav's personality prompt (for internal context, not repeated in output)
+# Define Zav's personality prompt
 personality_prompt = (
     "Zav is a 27-year-old crypto trader and zombie scare actor with high-energy Twitch vibes. "
-    "Rants start directly with a spontaneous story, with topics generated randomly."
+    "Rants start directly with a spontaneous story about {topic}, using phrases like 'I dove headfirst!' or 'This is wild!'"
 )
 
 # State variables
+current_topic = ""
 latest_text = ""
 instruction = ""
+previous_texts = []  # Track prior rants
+used_sentences = set()  # Track unique sentences
 
-# Generate a random topic for each rant
-def generate_topic():
-    keywords = [''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=6)) for _ in range(2)]
-    return f"{keywords[0]} and {keywords[1]}"
+# Predefined topics
+topics = [
+    "yolo memecoin trades", "Carl’s naggin’", "Kayla’s banker drama",
+    "UFO conspiracies", "my shack’s roach party", "crypto scams"
+]
 
-# Clean generated text and ensure word count
-def clean_and_trim_text(generated, is_reply=False):
-    # Strip prompt and personality details
-    if is_reply:
-        pattern = r"^Zav,.*He responds.*?\s*"
-    else:
-        pattern = r"^Zav\s.*?\.\s*"
-    cleaned = re.sub(pattern, "", generated, flags=re.DOTALL).strip()
-
-    # Remove any prompt fragments and templated phrases
-    cleaned = re.sub(r"Zav.*?(?=(Okay|\S+\.|\S+!|$))|crypto trader|He dives into with a crypto, spooky, quirky , using 'I dove headfirst!' or 'This is wild!' s with a , with topics generated . |streaming|yo chat|chat says|let us vibe|cracking knuckles|doodling|thinking about|this reminds|building on|energetic|narrative|spontaneous|vivid stories|nonstop talk|curiosity|weaving|flair|generated on|ongoing|live stream|mention|chat|rant|story|dive into|start directly|randomly|phrases like", "", cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r"[—…!]{2,}", ".", cleaned)
-    cleaned = re.sub(r"[^\w\s.,!?]", "", cleaned)  # Remove special characters except punctuation
-    cleaned = re.sub(r"\.{2,}", ".", cleaned)  # Replace multiple dots with a single dot
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-    # Split into sentences
-    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
-    word_count = 0
-    trimmed_sentences = []
-
-    # Trim to 190-210 words
-    for sentence in sentences:
-        words = sentence.split()
-        if word_count + len(words) <= 210:
-            trimmed_sentences.append(sentence)
-            word_count += len(words)
-        else:
-            break
-
-    result = " ".join(trimmed_sentences).strip()
-    return result, word_count
-
-# Text generation function
+# Generate text
 def generate_text(is_reply=False, reply_text=None):
-    global latest_text, instruction
-    topic = generate_topic()
+    global current_topic, latest_text, instruction, previous_texts, used_sentences
+    context_ref = previous_texts[-1].split()[-4:-1] if previous_texts else ["chat"]
+    context_word = " ".join(context_ref) if context_ref else "chat"
 
     if is_reply and reply_text:
         prompt = (
             f"Zav, a crypto trader and zombie scare actor, streams with high-energy vibes. "
-            f"Someone said: '{reply_text}' "
-            f"He responds with a story about {topic}, jumping right in with phrases like 'I dove headfirst!' or 'This is wild!'"
+            f"Chat says: '{reply_text}' "
+            f"He responds with a story about {current_topic}, jumping right in with phrases like 'I dove headfirst!' or 'This is wild!'"
         )
     else:
-        prompt = personality_prompt.format(topic=topic)
+        if random.random() < 0.3 or not previous_texts:
+            current_topic = random.choice([t for t in topics if t != current_topic])
+        transition = f"Speakin’ of {context_word}, "
+        prompt = f"{transition}{personality_prompt.format(topic=current_topic)}"
 
-    # Generate text
-    output = generator(
-        prompt,
-        max_new_tokens=400,
-        num_return_sequences=1,
-        truncation=True,
-        temperature=0.85,
-        top_k=40,
-        no_repeat_ngram_size=5,
-        pad_token_id=50256
-    )
+    # Generate text with memory optimization
+    with torch.no_grad():
+        output = generator(
+            prompt,
+            max_new_tokens=90,
+            num_return_sequences=1,
+            truncation=True,
+            temperature=0.85,
+            top_k=40,
+            no_repeat_ngram_size=5,
+            pad_token_id=50256
+        )
     generated = output[0]['generated_text']
 
-    # Clean and trim output
-    result, word_count = clean_and_trim_text(generated, is_reply)
+    # Clean text
+    clean_text = re.sub(
+        r'(?si)^.*?(\bZav\b|\bstreamin’\b|\broastin\b|\bTalkin’\b|\bChat says:\b|\bSpeakin’ of.*?\bBy the way,|\bOh, that reminds me,|\blet’s fuckin’ go!|cracking jokes).*',
+        '', generated
+    ).strip()
+
+    # Ensure unique sentences
+    sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+    unique_sentences = []
+    for sentence in sentences:
+        if sentence.strip() and sentence not in used_sentences:
+            unique_sentences.append(sentence)
+            used_sentences.add(sentence)
+
+    clean_text = ' '.join(unique_sentences)
+    words = clean_text.split()
+    if not clean_text or len(words) < 50 or not unique_sentences:
+        clean_text = (
+            f"Yo, chat, {current_topic} is wild! Carl’s naggin’ kills my vibe, no cap. "
+            f"I YOLO’d $20 on Pump.fun, hopin’ it pops. Your trades tank worse than Carl’s jokes. "
+            f"Kayla’s banker’s X posts are trash. My shack’s a mess, roaches everywhere. "
+            f"Let’s roast something else!"
+        )
+        sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+        clean_text = ' '.join(s for s in sentences if s not in used_sentences)
+        words = clean_text.split()
+        for s in sentences:
+            if s not in used_sentences:
+                used_sentences.add(s)
+
+    if len(words) > 70:
+        truncated = ' '.join(words[:70])
+        last_period = truncated.rfind('.')
+        clean_text = truncated[:last_period + 1] if last_period > 0 else truncated + '...'
+
+    if len(used_sentences) > 1000:
+        used_sentences.clear()
 
     if not is_reply:
-        latest_text = result
+        latest_text = clean_text
+        previous_texts.append(clean_text)
+        if len(previous_texts) > 1:
+            previous_texts.pop(0)
         instruction = ""
 
-    return result
+    logging.info(f"Generated text: {clean_text}")
+    return clean_text
 
-# Automatic streaming function
+# Automatic streaming
 def stream_continuously():
     while True:
         text = generate_text()
-        print(f"Zav says: {text}")
+        logging.info(f"Zav says: {text}")
         time.sleep(60)
 
-# Start streaming in a background thread
+# Start streaming in background
 threading.Thread(target=stream_continuously, daemon=True).start()
 
-# Set up Flask API
+# Flask API
 app = Flask(__name__)
 
 @app.route('/stream', methods=['GET'])
