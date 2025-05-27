@@ -4,6 +4,14 @@ import random
 import re
 import threading
 import time
+import torch
+
+generator = pipeline('text-generation', model='distilgpt2', device=-1)  # CPU
+
+def generate_text(topic, is_reply=False):
+    with torch.no_grad():  # Disable gradient computation
+        output = generator(...)
+    # Rest of your function
 
 # Initialize the text generation pipeline with DistilGPT-2
 generator = pipeline('text-generation', model='distilgpt2', device=-1)
