@@ -54,7 +54,7 @@ def generate_text(is_reply=False, reply_text=None):
     with torch.no_grad():
         output = generator(
             prompt,
-            max_new_tokens=90,
+            max_new_tokens=50,  # Reduced for memory
             num_return_sequences=1,
             truncation=True,
             temperature=0.85,
@@ -145,6 +145,10 @@ def handle_reply():
         response = generate_text(is_reply=True, reply_text=data['reply'])
         return jsonify({'response': response})
     return jsonify({'error': 'No reply provided'}), 400
+
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
     app.run(port=5000)
